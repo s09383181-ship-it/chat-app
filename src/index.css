@@ -5,11 +5,12 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Vazirmatn', Tahoma, sans-serif;
   background: #0f172a;
   color: #e2e8f0;
   height: 100vh;
   overflow: hidden;
+  direction: rtl;
 }
 
 #root {
@@ -18,11 +19,11 @@ body {
   flex-direction: column;
 }
 
-.app {
+.app, .admin {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 800px;
+  max-width: 900px;
   width: 100%;
   margin: 0 auto;
   background: #1e293b;
@@ -36,7 +37,7 @@ body {
   justify-content: center;
   height: 100vh;
   padding: 1rem;
-  gap: 1rem;
+  gap: 0.5rem;
 }
 
 .login h1 {
@@ -46,7 +47,7 @@ body {
 
 .login p {
   color: #94a3b8;
-  margin-bottom: 1rem;
+  text-align: center;
 }
 
 .login form {
@@ -55,6 +56,7 @@ body {
   gap: 0.75rem;
   width: 100%;
   max-width: 320px;
+  margin-top: 1rem;
 }
 
 .login input {
@@ -65,7 +67,7 @@ body {
   color: #e2e8f0;
   font-size: 1rem;
   outline: none;
-  transition: border-color 0.2s;
+  text-align: right;
 }
 
 .login input:focus {
@@ -81,7 +83,6 @@ body {
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
 }
 
 .login button:hover {
@@ -109,6 +110,7 @@ body {
   color: #f87171;
   font-size: 0.875rem;
   margin-top: 0.5rem;
+  text-align: center;
 }
 
 /* === Header === */
@@ -147,7 +149,7 @@ body {
   background: #475569;
 }
 
-/* === Chat === */
+/* === Chat messages === */
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -157,18 +159,9 @@ body {
   gap: 0.5rem;
 }
 
-.messages::-webkit-scrollbar {
-  width: 8px;
-}
-
-.messages::-webkit-scrollbar-track {
-  background: #1e293b;
-}
-
-.messages::-webkit-scrollbar-thumb {
-  background: #475569;
-  border-radius: 4px;
-}
+.messages::-webkit-scrollbar { width: 8px; }
+.messages::-webkit-scrollbar-track { background: #1e293b; }
+.messages::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
 
 .msg {
   padding: 0.6rem 0.9rem;
@@ -196,7 +189,7 @@ body {
   font-size: 0.65rem;
   opacity: 0.6;
   margin-top: 0.2rem;
-  text-align: right;
+  text-align: left;
 }
 
 .empty {
@@ -204,9 +197,10 @@ body {
   color: #64748b;
   margin: auto;
   font-style: italic;
+  padding: 2rem;
 }
 
-/* === Input === */
+/* === Input bar === */
 .input-bar {
   display: flex;
   padding: 0.75rem;
@@ -224,6 +218,7 @@ body {
   color: #e2e8f0;
   font-size: 1rem;
   outline: none;
+  text-align: right;
 }
 
 .input-bar input:focus {
@@ -240,11 +235,143 @@ body {
   cursor: pointer;
 }
 
-.input-bar button:hover {
-  background: #0ea5e9;
+.input-bar button:hover { background: #0ea5e9; }
+.input-bar button:disabled { background: #475569; cursor: not-allowed; }
+
+/* === Admin Panel === */
+.admin-header {
+  padding: 1rem;
+  background: #7c2d12;
+  border-bottom: 2px solid #ea580c;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.input-bar button:disabled {
-  background: #475569;
-  cursor: not-allowed;
+.admin-header h2 {
+  font-size: 1.25rem;
+  color: #fed7aa;
 }
+
+.admin-tabs {
+  display: flex;
+  background: #0f172a;
+  border-bottom: 1px solid #334155;
+}
+
+.admin-tabs button {
+  flex: 1;
+  padding: 0.75rem;
+  background: transparent;
+  color: #94a3b8;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 0.875rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.admin-tabs button:hover {
+  color: #e2e8f0;
+  background: #1e293b;
+}
+
+.admin-tabs button.active {
+  color: #fb923c;
+  border-bottom-color: #fb923c;
+  background: #1e293b;
+}
+
+.admin-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.admin-content::-webkit-scrollbar { width: 8px; }
+.admin-content::-webkit-scrollbar-track { background: #1e293b; }
+.admin-content::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+
+.user-list, .msg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.user-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  gap: 1rem;
+}
+
+.user-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-info strong {
+  color: #e2e8f0;
+  font-size: 1rem;
+}
+
+.user-meta {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 0.2rem;
+}
+
+.user-lastmsg {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-top: 0.3rem;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-ban, .btn-unban {
+  padding: 0.4rem 0.85rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-ban {
+  background: #dc2626;
+  color: white;
+}
+
+.btn-ban:hover { background: #b91c1c; }
+
+.btn-unban {
+  background: #16a34a;
+  color: white;
+}
+
+.btn-unban:hover { background: #15803d; }
+
+.msg-row {
+  padding: 0.6rem 0.8rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+}
+
+.msg-row-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.3rem;
+}
+
+.msg-row-head strong { color: #38bdf8; }
+.msg-row-head .time { font-size: 0.7rem; color: #64748b; }
+.msg-row-text { color: #e2e8f0; font-size: 0.9rem; }
