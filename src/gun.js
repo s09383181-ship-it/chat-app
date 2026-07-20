@@ -1,24 +1,21 @@
 import Gun from 'gun'
 
-// لیست relay ها. اگه خالی باشه، فقط local + WebRTC کار می‌کنه
-const PEERS = [
-  // 'https://your-relay.com/gun',
-]
-
+// GUN بدون relay — فقط local + WebRTC بین browserها
+// این یعنی فقط کسایی که همزمان آنلاینن می‌بینن همو
+// ولی برای چت ساده کافیه
 export const gun = Gun({
-  peers: PEERS,
+  peers: [],
   localStorage: true,
   radisk: true,
+  axe: false,
+  multicast: false,
 })
 
-// ریشه دیتابیس
-export const ROOT = gun.get('chatapp/v2')
+export const ROOT = gun.get('chatapp-v3')
 export const CHAT = ROOT.get('messages')
 export const BANS = ROOT.get('bans')
-export const USERS = ROOT.get('users') // ثبت اسم‌های وارد شده
 
-// هش SHA-256 از (رمز ادمین + salt) — یک‌طرفه و امن
-// هیچ‌وقت رمز اصلی توی کد نیست
+// ادمین: هش + salt
 const ADMIN_HASH = '281d93cdc2ae840b2637fd416ffe0f5aec9d757bb1760e2cd1b6c4843bb4fa25'
 const ADMIN_SALT = 's9k2j4h8f7d3g6h1j4k7l0m3n6p9q2r5'
 
@@ -32,4 +29,14 @@ async function sha256(text) {
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
+}
+
+// device id یکتا (هر مرورگر یکی داره)
+export function getDeviceId() {
+  let id = localStorage.getItem('device_id')
+  if (!id) {
+    id = 'd_' + Date.now() + '_' + Math.random().toString(36).slice(2, 12)
+    localStorage.setItem('device_id', id)
+  }
+  return id
 }
