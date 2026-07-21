@@ -10,13 +10,12 @@ import {
   slug,
 } from './gun'
 
-const ALIAS_KEY = 'chatapp_alias_v4'
-const BIO_KEY = 'chatapp_bio_v4'
-const AVATAR_KEY = 'chatapp_avatar_v4' // emoji avatar
-const ADMIN_KEY = 'chatapp_admin_v4'
+const ALIAS_KEY = 'chatapp_alias_v5'
+const BIO_KEY = 'chatapp_bio_v5'
+const AVATAR_KEY = 'chatapp_avatar_v5'
+const ADMIN_KEY = 'chatapp_admin_v5'
 
-// لیست emoji برای انتخاب آواتار
-const AVATARS = ['😀', '😎', '🦊', '🐱', '🐶', '🦁', '🐯', '🐼', '🐸', '🦄', '🌟', '🔥', '💎', '🎮', '⚽', '🚀', '🍕', '🎵']
+const AVATARS = ['😀', '😎', '🦊', '🐱', '🐶', '🦁', '🐯', '🐼', '🐸', '🦄', '🌟', '🔥', '💎', '🎮', '⚽', '🚀', '🍕', '🎵', '🌈', '⚡', '🌺', '🦋', '🐧', '🐰']
 
 const COLORS = [
   ['#fb923c', '#ea580c'],
@@ -27,6 +26,8 @@ const COLORS = [
   ['#facc15', '#ca8a04'],
   ['#34d399', '#047857'],
   ['#fb7185', '#9f1239'],
+  ['#818cf8', '#4338ca'],
+  ['#fcd34d', '#b45309'],
 ]
 
 function colorFor(name) {
@@ -47,7 +48,8 @@ export default function App() {
   const [showProfile, setShowProfile] = useState(false)
   const [adminPw, setAdminPw] = useState('')
   const [adminError, setAdminError] = useState('')
-  const [adminLocked, setAdminLocked] = useState(false) // قفل سراسری
+  const [adminLockedByOther, setAdminLockedByOther] = useState(false)
+  const [adminLockedByMe, setAdminLockedByMe] = useState(false)
 
   const [messages, setMessages] = useState([])
   const [bans, setBans] = useState({})
@@ -65,18 +67,21 @@ export default function App() {
   useEffect(() => {
     ADMIN_LOCK.get('locked').on((data) => {
       if (data && data.value === true) {
-        setAdminLocked(true)
-        // اگه خودم لاگین نیستم، بیرون کن
-        if (sessionStorage.getItem(ADMIN_KEY) !== '1') {
-          setIsAdmin(false)
-          setShowAdminLogin(false)
-          setShowAdminPanel(false)
+        if (data.by === deviceId) {
+          // خودم قفل کردم
+          setAdminLockedByMe(true)
+          setAdminLockedByOther(false)
+        } else {
+          // یکی دیگه قفل کرده
+          setAdminLockedByMe(false)
+          setAdminLockedByOther(true)
         }
       } else {
-        setAdminLocked(false)
+        setAdminLockedByMe(false)
+        setAdminLockedByOther(false)
       }
     })
-  }, [])
+  }, [deviceId])
 
   // ===== subscribe: bans =====
   useEffect(() => {
@@ -135,29 +140,33 @@ export default function App() {
     }, 50)
   }, [messages, showAdminPanel])
 
-  // ===== ثبت نام =====
+  // ===== ثبت‌نام =====
   function registerAlias(e) {
     e.preventDefault()
     setAliasError('')
     const a = aliasInput.trim().slice(0, 20)
     if (!a) return
-
-    // چک کن این اسم قبلاً ثبت نشده باشه
     USERS.get(slug(a)).once((data) => {
       if (data && data.deviceId && data.deviceId !== deviceId) {
         setAliasError('این اسم قبلاً توسط یک نفر دیگه ثبت شده')
         return
       }
-      // ثبت
-      USERS.get(slug(a)).put({
-        alias: a,
-        deviceId,
-        time: Date.now(),
-      })
+      USERS.get(slug(a)).put({ alias: a, deviceId, time: Date.now() })
       localStorage.setItem(ALIAS_KEY, a)
       setAlias(a)
       setAliasInput('')
     })
+  }
+
+  // ===== خروج =====
+  function logout() {
+    localStorage.removeItem(ALIAS_KEY)
+    localStorage.removeItem(BIO_KEY)
+    localStorage.removeItem(AVATAR_KEY)
+    setAlias('')
+    setBio('')
+    setAvatar('😀')
+    setText('')
   }
 
   // ===== ارسال پیام =====
@@ -182,8 +191,8 @@ export default function App() {
   async function adminLogin(e) {
     e.preventDefault()
     setAdminError('')
-    if (adminLocked) {
-      setAdminError('پنل مدیریت قبلاً توسط یک نفر فعال شده')
+    if (adminLockedByOther) {
+      setAdminError('پنل مدیریت قبلاً توسط یک نفر دیگه فعال شده')
       return
     }
     if (!adminPw) {
@@ -192,7 +201,6 @@ export default function App() {
     }
     const ok = await checkAdminPassword(adminPw)
     if (ok) {
-      // قفل سراسری رو فعال کن
       ADMIN_LOCK.get('locked').put({
         value: true,
         by: deviceId,
@@ -200,6 +208,7 @@ export default function App() {
       })
       sessionStorage.setItem(ADMIN_KEY, '1')
       setIsAdmin(true)
+      setAdminLockedByMe(true)
       setShowAdminLogin(false)
       setShowAdminPanel(true)
       setAdminPw('')
@@ -227,7 +236,6 @@ export default function App() {
     BANS.get(banId).put(null)
   }
 
-  // ===== رنگ آواتار =====
   const myColor = colorFor(alias || 'guest')
 
   // ===== RENDER =====
@@ -239,7 +247,7 @@ export default function App() {
         <div className="login-card">
           <div className="login-logo">🛡️</div>
           <h1>پنل مدیریت</h1>
-          <p>{adminLocked ? 'پنل قفل شده' : 'رمز رو وارد کن'}</p>
+          <p>{adminLockedByOther ? 'پنل قبلاً توسط یک نفر دیگه فعال شده' : 'رمز رو وارد کن'}</p>
           <form onSubmit={adminLogin}>
             <input
               type="password"
@@ -247,10 +255,10 @@ export default function App() {
               value={adminPw}
               onChange={(e) => setAdminPw(e.target.value)}
               autoFocus
-              disabled={adminLocked}
+              disabled={adminLockedByOther}
             />
-            <button type="submit" disabled={adminLocked || !adminPw}>
-              {adminLocked ? 'قفل شده' : 'ورود'}
+            <button type="submit" disabled={adminLockedByOther || !adminPw}>
+              {adminLockedByOther ? 'قفل توسط دیگری' : 'ورود'}
             </button>
             <button
               type="button"
@@ -270,7 +278,7 @@ export default function App() {
     )
   }
 
-  // 2. ثبت‌نام (فقط اگه alias نداریم)
+  // 2. ثبت‌نام
   if (!alias) {
     return (
       <div className="login-screen">
@@ -345,7 +353,7 @@ export default function App() {
         </button>
         <div className="header-info">
           <div className="header-title">چت عمومی</div>
-          <div className="header-sub">{messages.length} پیام</div>
+          <div className="header-sub">{messages.length} پیام • {alias}</div>
         </div>
         {isAdmin && (
           <button
@@ -439,6 +447,7 @@ export default function App() {
           avatar={avatar}
           color={myColor}
           onClose={() => setShowProfile(false)}
+          onLogout={logout}
           onSave={(a, b, av) => {
             localStorage.setItem(ALIAS_KEY, a)
             localStorage.setItem(BIO_KEY, b)
@@ -469,11 +478,12 @@ export default function App() {
 }
 
 // ===== Profile Modal =====
-function ProfileModal({ alias, bio, avatar, color, onClose, onSave }) {
+function ProfileModal({ alias, bio, avatar, color, onClose, onSave, onLogout }) {
   const [a, setA] = useState(alias)
   const [b, setB] = useState(bio)
   const [av, setAv] = useState(avatar)
   const [err, setErr] = useState('')
+  const myDeviceId = getDeviceId()
 
   function save(e) {
     e.preventDefault()
@@ -482,9 +492,8 @@ function ProfileModal({ alias, bio, avatar, color, onClose, onSave }) {
     if (!na) return
 
     if (na !== alias) {
-      // چک یکتا بودن
       USERS.get(slug(na)).once((data) => {
-        if (data && data.deviceId && data.deviceId !== getDeviceId()) {
+        if (data && data.deviceId && data.deviceId !== myDeviceId) {
           setErr('این اسم قبلاً ثبت شده')
           return
         }
@@ -508,7 +517,7 @@ function ProfileModal({ alias, bio, avatar, color, onClose, onSave }) {
         </div>
         <form onSubmit={save}>
           <div className="avatar-picker">
-            <label>آواتار</label>
+            <label>آواتار خودت رو انتخاب کن</label>
             <div className="avatar-grid">
               {AVATARS.map((e) => (
                 <button
@@ -545,10 +554,13 @@ function ProfileModal({ alias, bio, avatar, color, onClose, onSave }) {
           </div>
           {err && <div className="err" style={{ padding: '0 1rem' }}>{err}</div>}
           <button type="submit" className="modal-btn primary">
-            ذخیره ✓
+            ذخیره تغییرات ✓
+          </button>
+          <button type="button" className="modal-btn logout-btn" onClick={onLogout}>
+            🚪 خروج از حساب
           </button>
           <button type="button" className="modal-btn" onClick={onClose}>
-            انصراف
+            بستن
           </button>
         </form>
       </div>
@@ -558,83 +570,106 @@ function ProfileModal({ alias, bio, avatar, color, onClose, onSave }) {
 
 // ===== Admin Panel =====
 function AdminPanel({ messages, bans, alias, onClose, onBan, onUnban }) {
+  const [tab, setTab] = useState('chat') // chat | bans
   const banList = Object.entries(bans).filter(([_, b]) => b && b.alias)
 
   return (
-    <div className="app">
+    <div className="app admin-app">
       <div className="header admin-header">
         <button className="back-btn" onClick={onClose}>‹</button>
         <div className="header-info">
-          <div className="header-title">پنل مدیریت</div>
-          <div className="header-sub">مدیر: {alias}</div>
+          <div className="header-title">🛡️ پنل مدیریت</div>
+          <div className="header-sub">{alias} • {messages.length} پیام • {banList.length} بن</div>
         </div>
       </div>
 
-      <div className="admin-scroll">
-        <div className="admin-section">
-          <h3>🚫 کاربران بن شده ({banList.length})</h3>
-          {banList.length === 0 && (
-            <div className="empty-mini">کسی بن نیست ✅</div>
-          )}
-          {banList.map(([id, b]) => {
-            const c = colorFor(b.alias)
-            return (
-              <div key={id} className="ban-row">
-                <div className="ban-info">
-                  <div
-                    className="ban-avatar"
-                    style={{ background: `linear-gradient(135deg, ${c[0]}, ${c[1]})` }}
-                  >
-                    {b.alias.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <strong>{b.alias}</strong>
-                    <div className="ban-meta">
-                      {new Date(b.time).toLocaleString('fa-IR')}
-                    </div>
-                  </div>
-                </div>
-                <button className="btn-unban" onClick={() => onUnban(id)}>
-                  رفع بن
-                </button>
-              </div>
-            )
-          })}
-        </div>
+      <div className="admin-tabs">
+        <button
+          className={tab === 'chat' ? 'active' : ''}
+          onClick={() => setTab('chat')}
+        >
+          💬 پیام‌ها
+        </button>
+        <button
+          className={tab === 'bans' ? 'active' : ''}
+          onClick={() => setTab('bans')}
+        >
+          🚫 بن‌ها
+          {banList.length > 0 && <span className="badge">{banList.length}</span>}
+        </button>
+      </div>
 
-        <div className="admin-section">
-          <h3>💬 پیام‌ها ({messages.length})</h3>
-          <p className="admin-hint">برای بن کردن روی پیام کلیک کن</p>
-          <div className="admin-msg-list">
-            {messages.slice().reverse().slice(0, 50).map((m) => {
-              const c = colorFor(m.who)
+      <div className="admin-scroll">
+        {tab === 'chat' && (
+          <div className="admin-section">
+            <p className="admin-hint">برای بن کردن روی هر پیام کلیک کن</p>
+            <div className="admin-msg-list">
+              {messages.slice().reverse().slice(0, 50).map((m) => {
+                const c = colorFor(m.who)
+                return (
+                  <div
+                    key={m.id}
+                    className="admin-msg-row"
+                    onClick={() => onBan(m)}
+                  >
+                    <div className="admin-msg-head">
+                      <div
+                        className="ban-avatar small"
+                        style={{ background: `linear-gradient(135deg, ${c[0]}, ${c[1]})` }}
+                      >
+                        {m.avatar || m.who.charAt(0)}
+                      </div>
+                      <strong>{m.who}</strong>
+                      {m.bio && <span className="msg-bio-tag">{m.bio}</span>}
+                      <span className="ban-meta">
+                        {new Date(m.time).toLocaleTimeString('fa-IR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                    <div className="admin-msg-text">{m.text}</div>
+                  </div>
+                )
+              })}
+              {messages.length === 0 && (
+                <div className="empty-mini">پیامی نیست</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === 'bans' && (
+          <div className="admin-section">
+            {banList.length === 0 && (
+              <div className="empty-mini success">کسی بن نیست ✅ همه چی آرومه</div>
+            )}
+            {banList.map(([id, b]) => {
+              const c = colorFor(b.alias)
               return (
-                <div
-                  key={m.id}
-                  className="admin-msg-row"
-                  onClick={() => onBan(m)}
-                >
-                  <div className="admin-msg-head">
+                <div key={id} className="ban-row">
+                  <div className="ban-info">
                     <div
-                      className="ban-avatar small"
+                      className="ban-avatar"
                       style={{ background: `linear-gradient(135deg, ${c[0]}, ${c[1]})` }}
                     >
-                      {m.avatar || m.who.charAt(0)}
+                      {b.alias.charAt(0).toUpperCase()}
                     </div>
-                    <strong>{m.who}</strong>
-                    <span className="ban-meta">
-                      {new Date(m.time).toLocaleTimeString('fa-IR', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
+                    <div>
+                      <strong>{b.alias}</strong>
+                      <div className="ban-meta">
+                        بن شده: {new Date(b.time).toLocaleString('fa-IR')}
+                      </div>
+                    </div>
                   </div>
-                  <div className="admin-msg-text">{m.text}</div>
+                  <button className="btn-unban" onClick={() => onUnban(id)}>
+                    رفع بن
+                  </button>
                 </div>
               )
             })}
           </div>
-        </div>
+        )}
       </div>
     </div>
   )
