@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html><head><title>Reset</title></head>
+<body style="background:#000;color:#0f0;font-family:monospace;padding:20px">
+<h1>🔧 Reset All Bans</h1>
+<div id="log">Loading...</div>
+<script type="module">
+import Gun from 'https://cdn.jsdelivr.net/npm/gun@0.2020.1241/gun.js'
+const gun = Gun({peers: [], localStorage: false})
+const BANS = gun.get('chatapp-v6/bans')
+let count = 0
+BANS.map().once((data, id) => {
+  if (data && (data.deviceId || data.alias)) {
+    count++
+    BANS.get(id).put(null)
+    log('Unbanned: ' + (data.alias || id))
+  }
+})
+setTimeout(() => {
+  document.getElementById('log').innerHTML = '<h2>✅ Done! Unbanned ' + count + ' users</h2><p>Close this page.</p>'
+}, 3000)
+function log(m) { document.getElementById('log').innerHTML += '<div>' + m + '</div>' }
+</script>
+</body></html>
