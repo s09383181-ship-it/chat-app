@@ -1,21 +1,38 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback, memo } from 'react'
 import {
   gun,
   CHAT,
   BANS,
   USERS,
   ADMIN_LOCK,
+  ADMIN_DEVICE,
+  CHANNEL,
+  CHAT_LOCK,
   checkAdminPassword,
   getDeviceId,
+  getFingerprint,
   slug,
+  canSend,
 } from './gun'
 
-const ALIAS_KEY = 'chatapp_alias_v5'
-const BIO_KEY = 'chatapp_bio_v5'
-const AVATAR_KEY = 'chatapp_avatar_v5'
-const ADMIN_KEY = 'chatapp_admin_v5'
+const ALIAS_KEY = 'chatapp_alias_v6'
+const BIO_KEY = 'chatapp_bio_v6'
+const AVATAR_KEY = 'chatapp_avatar_v6'
+const ADMIN_KEY = 'chatapp_admin_v6'
 
-const AVATARS = ['😀', '😎', '🦊', '🐱', '🐶', '🦁', '🐯', '🐼', '🐸', '🦄', '🌟', '🔥', '💎', '🎮', '⚽', '🚀', '🍕', '🎵', '🌈', '⚡', '🌺', '🦋', '🐧', '🐰']
+const AVATARS = [
+  '😀','😎','🦊','🐱','🐶','🦁','🐯','🐼','🐸','🦄',
+  '🌟','🔥','💎','🎮','⚽','🚀','🍕','🎵','🌈','⚡',
+  '🌺','🦋','🐧','🐰','👑','💀','🤖','👻','🎃','🎯'
+]
+
+const TEMPLATES = [
+  { id: 'news',    label: 'خبر فوری',   icon: '🚨', color: '#ef4444' },
+  { id: 'announce',label: 'اطلاعیه',    icon: '📢', color: '#06b6d4' },
+  { id: 'article', label: 'مقاله',      icon: '📝', color: '#10b981' },
+  { id: 'question',label: 'سوال',        icon: '❓', color: '#a855f7' },
+  { id: 'none',    label: 'بدون قالب',   icon: '✨', color: '#8b7d99' },
+]
 
 const COLORS = [
   ['#fb923c', '#ea580c'],
@@ -36,13 +53,540 @@ function colorFor(name) {
   return COLORS[h % COLORS.length]
 }
 
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatDate(ts) {
+  return new Date(ts).toLocaleString('fa-IR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+// ============================================
+// MessageBubble - Memoized for performance
+// ============================================
+const MessageBubble = memo(function MessageBubble({ m, alias, isAdmin, isMe, onAction, onReply, onUserClick, replyToMsg }) {
+  const c = colorFor(m.who)
+  const isDeleted = m.deleted === true
+  const replyMsg = m.replyTo ? (m.replyTo.id ? m.replyTo : replyToMsg) : null
+
+  return (
+    <div className={`bubble-wrap ${isMe ? 'me' : 'other'}`} onClick={() => onAction(m)}>
+      {!isMe && !isDeleted && (
+        <div
+          className="bubble-avatar"
+          style={{ background: `linear-gradient(135deg, ${c[0]}, ${c[1]})` }}
+          onClick={(e) => { e.stopPropagation(); onUserClick(m.who) }}
+        >
+          {m.avatar || m.who.charAt(0)}
+        </div>
+      )}
+      <div className={`bubble ${isMe ? 'me' : 'other'}`}>
+        {!isMe && !isDeleted && (
+          <div className="bubble-head">
+            <div>
+              <div className={`bubble-who ${m.isAdmin ? 'admin' : ''}`}>
+                {m.who}
+                {m.isAdmin && <span> 🛡️</span>}
+              </div>
+              {m.bio && <div className="bubble-bio">{m.bio}</div>}
+            </div>
+          </div>
+        )}
+
+        {replyMsg && !isDeleted && (
+          <div className="reply-quote" onClick={(e) => e.stopPropagation()}>
+            <div className="reply-who">{replyMsg.who || '?'}</div>
+            <div className="reply-text">{(replyMsg.text || '').slice(0, 80)}</div>
+          </div>
+        )}
+
+        {isDeleted ? (
+          <div className="bubble-text deleted">🚫 این پیام حذف شد</div>
+        ) : (
+          <>
+            <div className="bubble-text">{m.text}</div>
+            {m.image && (
+              <img
+                src={m.image}
+                alt=""
+                className="bubble-img"
+                loading="lazy"
+                onClick={(e) => { e.stopPropagation(); window.open(m.image, '_blank') }}
+              />
+            )}
+          </>
+        )}
+
+        <div className="bubble-time">{formatTime(m.time)}</div>
+      </div>
+    </div>
+  )
+})
+
+// ============================================
+// Reply Action Menu
+// ============================================
+function MessageActionMenu({ msg, isMe, isAdmin, onReply, onDelete, onBan, onClose, onJumpTo }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div
+            className="modal-avatar"
+            style={{ background: `linear-gradient(135deg, ${colorFor(msg.who)[0]}, ${colorFor(msg.who)[1]})` }}
+          >
+            {msg.avatar || msg.who.charAt(0)}
+          </div>
+          <div>
+            <div className="modal-name">{msg.who}</div>
+            <div className="modal-preview">"{msg.text ? msg.text.slice(0, 40) : '...'}"</div>
+          </div>
+        </div>
+        {!msg.deleted && (
+          <button className="modal-btn primary" onClick={() => { onReply(msg); onClose() }}>
+            💬 پاسخ به این پیام
+          </button>
+        )}
+        {msg.replyTo?.id && (
+          <button className="modal-btn" onClick={() => { onJumpTo(msg.replyTo.id); onClose() }}>
+            🔝 رفتن به پیام اصلی
+          </button>
+        )}
+        {isAdmin && !msg.deleted && (
+          <button className="modal-btn danger" onClick={() => { onDelete(msg); onClose() }}>
+            🗑️ حذف این پیام
+          </button>
+        )}
+        {isAdmin && (
+          <button className="modal-btn danger" onClick={() => { onBan(msg); onClose() }}>
+            🚫 بن کردن این کاربر
+          </button>
+        )}
+        <button className="modal-btn" onClick={onClose}>بستن</button>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// Profile Modal
+// ============================================
+function ProfileModal({ alias, bio, avatar, color, onClose, onSave, onLogout, isAdmin }) {
+  const [a, setA] = useState(alias)
+  const [b, setB] = useState(bio)
+  const [av, setAv] = useState(avatar)
+  const [err, setErr] = useState('')
+  const myDeviceId = getDeviceId()
+
+  function save(e) {
+    e.preventDefault()
+    setErr('')
+    const na = a.trim().slice(0, 20)
+    if (!na) return
+
+    if (na !== alias) {
+      USERS.get(slug(na)).once((data) => {
+        if (data && data.deviceId && data.deviceId !== myDeviceId) {
+          setErr('این اسم قبلاً ثبت شده')
+          return
+        }
+        onSave(na, b.trim().slice(0, 100), av)
+      })
+    } else {
+      onSave(na, b.trim().slice(0, 100), av)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="profile-head">
+          <div
+            className="profile-avatar-big"
+            style={{ background: `linear-gradient(135deg, ${color[0]}, ${color[1]})` }}
+          >
+            {av}
+          </div>
+          {isAdmin && <div style={{fontSize: 13, color: 'var(--c2)', fontWeight: 700}}>🛡️ مدیر سیستم</div>}
+        </div>
+        <form onSubmit={save}>
+          <div className="avatar-picker">
+            <label>آواتار خودت رو انتخاب کن</label>
+            <div className="avatar-grid">
+              {AVATARS.map((e) => (
+                <button
+                  type="button"
+                  key={e}
+                  className={`avatar-opt ${av === e ? 'active' : ''}`}
+                  onClick={() => setAv(e)}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <label>اسم</label>
+            <input
+              type="text"
+              value={a}
+              onChange={(e) => setA(e.target.value)}
+              maxLength={20}
+              placeholder="اسم مستعار"
+            />
+          </div>
+          <div className="field">
+            <label>بیو (حداکثر ۱۰۰ کاراکتر)</label>
+            <textarea
+              value={b}
+              onChange={(e) => setB(e.target.value)}
+              maxLength={100}
+              placeholder="یه چیزی درباره خودت بنویس..."
+              rows={2}
+            />
+            <div className="counter">{b.length}/100</div>
+          </div>
+          {err && <div className="err">{err}</div>}
+          <button type="submit" className="modal-btn primary">
+            ذخیره تغییرات ✓
+          </button>
+          <button type="button" className="modal-btn logout-btn" onClick={onLogout}>
+            🚪 خروج از حساب
+          </button>
+          <button type="button" className="modal-btn" onClick={onClose}>
+            بستن
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// Channel Editor (Admin)
+// ============================================
+function ChannelEditor({ onPublish, onCancel, isMobile }) {
+  const [template, setTemplate] = useState('none')
+  const [text, setText] = useState('')
+  const [image, setImage] = useState(null)
+  const fileRef = useRef(null)
+
+  const tpl = TEMPLATES.find(t => t.id === template)
+
+  function onFile(e) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    if (f.size > 2 * 1024 * 1024) {
+      alert('حجم عکس نباید بیشتر از ۲ مگابایت باشد')
+      return
+    }
+    const r = new FileReader()
+    r.onload = () => setImage(r.result)
+    r.readAsDataURL(f)
+  }
+
+  function publish() {
+    if (!text.trim() && !image) {
+      alert('متن یا عکس بذار')
+      return
+    }
+    if (text.length > 4000) {
+      alert('متن نباید بیشتر از ۴۰۰۰ کاراکتر باشد')
+      return
+    }
+    onPublish({
+      text: text.trim(),
+      image,
+      template,
+      templateColor: tpl.color,
+      templateLabel: tpl.label,
+    })
+    setText('')
+    setImage(null)
+    setTemplate('none')
+  }
+
+  return (
+    <div className="composer" style={{ '--tpl-color': tpl.color }}>
+      <div className="composer-templates">
+        {TEMPLATES.map(t => (
+          <button
+            key={t.id}
+            className={`tpl-chip ${template === t.id ? 'active' : ''}`}
+            onClick={() => setTemplate(t.id)}
+            style={{ '--tpl-color': t.color }}
+          >
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        placeholder="چی میخوای بگی..."
+        rows={3}
+      />
+      {image && (
+        <div className="composer-img-preview">
+          <img src={image} alt="" />
+          <button onClick={() => setImage(null)}>×</button>
+        </div>
+      )}
+      <div className="composer-actions">
+        <button className="img-upload-btn" onClick={() => fileRef.current?.click()}>🖼️</button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={onFile}
+        />
+        <button className="composer-publish" onClick={publish}>
+          {template !== 'none' ? tpl.icon + ' ' : ''}انتشار پست
+        </button>
+        {isMobile && <button className="modal-btn" onClick={onCancel}>انصراف</button>}
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// Admin Panel
+// ============================================
+function AdminPanel({ messages, bans, alias, channelInfo, onClose, onBan, onUnban, onDelete, onPublishPost, onUpdateChannel, onLockChat, onUnlockChat, chatLocked }) {
+  const [tab, setTab] = useState('chat')
+  const [showChanEdit, setShowChanEdit] = useState(false)
+  const banList = Object.entries(bans).filter(([_, b]) => b && (b.alias || b.deviceId))
+
+  return (
+    <div className="app admin-app">
+      <div className="header admin-header">
+        <button className="back-btn" onClick={onClose}>‹</button>
+        <div className="header-info">
+          <div className="header-title">🛡️ پنل مدیریت</div>
+          <div className="header-sub">{alias} • {messages.length} پیام • {banList.length} بن</div>
+        </div>
+        <button
+          className="hbtn admin"
+          onClick={chatLocked ? onUnlockChat : onLockChat}
+          title={chatLocked ? 'باز کردن چت' : 'قفل چت'}
+        >
+          {chatLocked ? '🔓' : '🔒'}
+        </button>
+      </div>
+
+      <div className="admin-tabs">
+        <button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>
+          💬 پیام‌ها
+        </button>
+        <button className={tab === 'bans' ? 'active' : ''} onClick={() => setTab('bans')}>
+          🚫 بن‌ها
+          {banList.length > 0 && <span className="badge">{banList.length}</span>}
+        </button>
+        <button className={tab === 'channel' ? 'active' : ''} onClick={() => setTab('channel')}>
+          📢 کانال
+        </button>
+      </div>
+
+      <div className="admin-scroll">
+        {tab === 'chat' && (
+          <div className="admin-section">
+            <p className="admin-hint">برای بن/حذف روی هر پیام کلیک کن</p>
+            <div className="admin-msg-list">
+              {messages.slice().reverse().slice(0, 100).map((m) => {
+                const c = colorFor(m.who)
+                return (
+                  <div key={m.id} className="admin-msg-row">
+                    <div className="admin-msg-head">
+                      <div
+                        className="ban-avatar small"
+                        style={{ background: `linear-gradient(135deg, ${c[0]}, ${c[1]})` }}
+                      >
+                        {m.avatar || m.who.charAt(0)}
+                      </div>
+                      <strong>{m.who}</strong>
+                      {m.isAdmin && <span style={{color: 'var(--c2)'}}>🛡️</span>}
+                      {m.bio && <span className="msg-bio-tag">{m.bio}</span>}
+                      <span className="ban-meta">{formatTime(m.time)}</span>
+                    </div>
+                    <div className="admin-msg-text">{m.text}</div>
+                    <div style={{display: 'flex', gap: 6, marginTop: 6}}>
+                      {!m.deleted && (
+                        <button className="btn-unban" style={{background: 'linear-gradient(135deg, var(--warn), #d97706)'}} onClick={(e) => { e.stopPropagation(); onDelete(m) }}>
+                          🗑️ حذف پیام
+                        </button>
+                      )}
+                      <button className="btn-unban" style={{background: 'linear-gradient(135deg, var(--danger), #dc2626)'}} onClick={(e) => { e.stopPropagation(); onBan(m) }}>
+                        🚫 بن
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+              {messages.length === 0 && <div className="empty-mini">پیامی نیست</div>}
+            </div>
+          </div>
+        )}
+
+        {tab === 'bans' && (
+          <div className="admin-section">
+            {banList.length === 0 ? (
+              <div className="empty-mini success">✅ کسی بن نیست</div>
+            ) : (
+              banList.map(([id, b]) => {
+                const c = colorFor(b.alias || '?')
+                return (
+                  <div key={id} className="ban-row">
+                    <div className="ban-info">
+                      <div
+                        className="ban-avatar"
+                        style={{ background: `linear-gradient(135deg, ${c[0]}, ${c[1]})` }}
+                      >
+                        {(b.alias || '?').charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <strong>{b.alias || '(بدون اسم)'}</strong>
+                        <div className="ban-meta">
+                          {formatDate(b.time)}
+                          {b.byAdmin && ' • توسط ادمین'}
+                        </div>
+                      </div>
+                    </div>
+                    <button className="btn-unban" onClick={() => onUnban(id)}>رفع بن</button>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        )}
+
+        {tab === 'channel' && (
+          <div className="admin-section">
+            <button
+              className="modal-btn primary"
+              onClick={() => setShowChanEdit(true)}
+              style={{marginBottom: 12}}
+            >
+              ✏️ ویرایش اطلاعات کانال
+            </button>
+            <ChannelEditor
+              onPublish={(post) => onPublishPost(post)}
+              onCancel={() => {}}
+            />
+          </div>
+        )}
+      </div>
+
+      {showChanEdit && (
+        <ChannelEditModal
+          channelInfo={channelInfo}
+          onSave={(info) => { onUpdateChannel(info); setShowChanEdit(false) }}
+          onClose={() => setShowChanEdit(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ============================================
+// Channel Edit Modal
+// ============================================
+function ChannelEditModal({ channelInfo, onSave, onClose }) {
+  const [name, setName] = useState(channelInfo.name || 'کانال رسمی')
+  const [desc, setDesc] = useState(channelInfo.desc || '')
+  const [avatar, setAvatar] = useState(channelInfo.avatar || '📢')
+  const [image, setImage] = useState(channelInfo.image || null)
+  const fileRef = useRef(null)
+
+  function onFile(e) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    if (f.size > 500 * 1024) {
+      alert('حجم عکس نباید بیشتر از ۵۰۰ کیلوبایت باشد')
+      return
+    }
+    const r = new FileReader()
+    r.onload = () => setImage(r.result)
+    r.readAsDataURL(f)
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div className="modal-avatar" style={{background: 'linear-gradient(135deg, var(--c1), var(--c2))'}}>📢</div>
+          <div>
+            <div className="modal-name">ویرایش کانال</div>
+            <div className="modal-preview">اسم، توضیح و عکس</div>
+          </div>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); onSave({ name, desc, avatar, image }) }}>
+          <div className="avatar-picker">
+            <label>ایموجی کانال</label>
+            <div className="avatar-grid">
+              {['📢','📣','📰','🎯','⚡','🔥','💎','🌟','🚀','📚','🎓','💡','🌍','❤️','🎉','🛡️'].map(e => (
+                <button
+                  key={e}
+                  type="button"
+                  className={`avatar-opt ${avatar === e ? 'active' : ''}`}
+                  onClick={() => setAvatar(e)}
+                >{e}</button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <label>اسم کانال</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={50}
+              placeholder="اسم کانال"
+            />
+          </div>
+          <div className="field">
+            <label>توضیحات</label>
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              maxLength={200}
+              placeholder="توضیح کوتاه..."
+              rows={2}
+            />
+            <div className="counter">{desc.length}/200</div>
+          </div>
+          <div className="field">
+            <label>عکس پروفایل (اختیاری)</label>
+            {image && (
+              <div className="composer-img-preview" style={{maxWidth: 100, marginBottom: 8}}>
+                <img src={image} alt="" style={{maxWidth: 100, maxHeight: 100}} />
+                <button type="button" onClick={() => setImage(null)}>×</button>
+              </div>
+            )}
+            <button type="button" className="modal-btn" onClick={() => fileRef.current?.click()}>
+              {image ? '🔄 تغییر عکس' : '📷 انتخاب عکس'}
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
+          </div>
+          <button type="submit" className="modal-btn primary">ذخیره ✓</button>
+          <button type="button" className="modal-btn" onClick={onClose}>انصراف</button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// Main App
+// ============================================
 export default function App() {
   const [deviceId] = useState(() => getDeviceId())
+  const [fingerprint] = useState(() => getFingerprint())
   const [alias, setAlias] = useState(() => localStorage.getItem(ALIAS_KEY) || '')
   const [bio, setBio] = useState(() => localStorage.getItem(BIO_KEY) || '')
   const [avatar, setAvatar] = useState(() => localStorage.getItem(AVATAR_KEY) || '😀')
 
-  const [isAdmin, setIsAdmin] = useState(() => sessionStorage.getItem(ADMIN_KEY) === '1')
+  const [isAdmin, setIsAdmin] = useState(false)
   const [showAdminPanel, setShowAdminPanel] = useState(false)
   const [showAdminLogin, setShowAdminLogin] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
@@ -50,6 +594,11 @@ export default function App() {
   const [adminError, setAdminError] = useState('')
   const [adminLockedByOther, setAdminLockedByOther] = useState(false)
   const [adminLockedByMe, setAdminLockedByMe] = useState(false)
+
+  const [mode, setMode] = useState('chat') // 'chat' | 'channel'
+  const [chatLocked, setChatLocked] = useState(false)
+  const [channelInfo, setChannelInfo] = useState({ name: 'کانال رسمی', desc: '', avatar: '📢', image: null })
+  const [channelPosts, setChannelPosts] = useState([])
 
   const [messages, setMessages] = useState([])
   const [bans, setBans] = useState({})
@@ -59,20 +608,36 @@ export default function App() {
   const [menuMsg, setMenuMsg] = useState(null)
   const [aliasInput, setAliasInput] = useState('')
   const [aliasError, setAliasError] = useState('')
+  const [replyTo, setReplyTo] = useState(null)
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+  const [hasNew, setHasNew] = useState(0)
 
   const messagesEnd = useRef(null)
   const inputRef = useRef(null)
+  const messagesRef = useRef(null)
 
-  // ===== subscribe: admin lock =====
+  // ====== Subscribe: admin device (auto-login) ======
+  useEffect(() => {
+    ADMIN_DEVICE.map().on((data, id) => {
+      if (data && data.deviceId === deviceId && data.alias) {
+        // این device admin هست
+        if (!isAdmin) {
+          setIsAdmin(true)
+          sessionStorage.setItem(ADMIN_KEY, '1')
+        }
+      }
+    })
+  }, [deviceId, isAdmin])
+
+  // ====== Subscribe: admin lock ======
   useEffect(() => {
     ADMIN_LOCK.get('locked').on((data) => {
       if (data && data.value === true) {
         if (data.by === deviceId) {
-          // خودم قفل کردم
           setAdminLockedByMe(true)
           setAdminLockedByOther(false)
         } else {
-          // یکی دیگه قفل کرده
           setAdminLockedByMe(false)
           setAdminLockedByOther(true)
         }
@@ -83,11 +648,18 @@ export default function App() {
     })
   }, [deviceId])
 
-  // ===== subscribe: bans =====
+  // ====== Subscribe: chat lock ======
+  useEffect(() => {
+    CHAT_LOCK.get('locked').on((data) => {
+      setChatLocked(data && data.value === true)
+    })
+  }, [])
+
+  // ====== Subscribe: bans ======
   useEffect(() => {
     const list = {}
     BANS.map().on((data, id) => {
-      if (data && (data.deviceId || data.alias)) {
+      if (data && (data.deviceId || data.alias || data.fingerprint)) {
         list[id] = data
       } else {
         delete list[id]
@@ -96,56 +668,129 @@ export default function App() {
     })
   }, [])
 
-  // ===== subscribe: messages =====
+  // ====== Subscribe: messages ======
   useEffect(() => {
     const list = []
     const seen = new Set()
     CHAT.map().on((data, id) => {
-      if (!data || !data.text || seen.has(id)) return
+      if (!data || seen.has(id)) return
       seen.add(id)
-      list.push({
+      const m = {
         id,
-        text: data.text,
+        text: data.text || '',
         who: data.who || 'کاربر',
         bio: data.bio || '',
         avatar: data.avatar || '👤',
         deviceId: data.deviceId || '',
+        fingerprint: data.fingerprint || '',
+        isAdmin: data.isAdmin || false,
         time: data.time || Date.now(),
-      })
+        deleted: data.deleted || false,
+        replyTo: data.replyTo || null,
+      }
+      list.push(m)
       list.sort((a, b) => a.time - b.time)
-      if (list.length > 300) list.splice(0, list.length - 300)
+      if (list.length > 500) list.splice(0, list.length - 500)
       setMessages([...list])
     })
   }, [])
 
-  // ===== check ban =====
+  // ====== Subscribe: channel info ======
   useEffect(() => {
+    CHANNEL.get('info').on((data) => {
+      if (data) {
+        setChannelInfo({
+          name: data.name || 'کانال رسمی',
+          desc: data.desc || '',
+          avatar: data.avatar || '📢',
+          image: data.image || null,
+        })
+      }
+    })
+  }, [])
+
+  // ====== Subscribe: channel posts ======
+  useEffect(() => {
+    const list = []
+    const seen = new Set()
+    CHANNEL.get('posts').map().on((data, id) => {
+      if (!data || seen.has(id)) return
+      seen.add(id)
+      list.push({ id, ...data })
+      list.sort((a, b) => a.time - b.time)
+      if (list.length > 200) list.splice(0, list.length - 200)
+      setChannelPosts([...list])
+    })
+  }, [])
+
+  // ====== Check ban (alias + device + fingerprint) ======
+  useEffect(() => {
+    if (isAdmin) {
+      setIsBanned(false)
+      setBanInfo(null)
+      return
+    }
     const banList = Object.values(bans)
     const myBan = banList.find(
-      (b) => b.deviceId === deviceId || (alias && b.alias === alias)
+      (b) =>
+        b.deviceId === deviceId ||
+        b.fingerprint === fingerprint ||
+        (alias && b.alias === alias)
     )
-    if (myBan && !isAdmin) {
+    if (myBan) {
       setIsBanned(true)
       setBanInfo(myBan)
     } else {
       setIsBanned(false)
       setBanInfo(null)
     }
-  }, [bans, deviceId, alias, isAdmin])
+  }, [bans, deviceId, fingerprint, alias, isAdmin])
 
-  // ===== auto-scroll =====
+  // ====== Scroll detection ======
   useEffect(() => {
-    setTimeout(() => {
-      messagesEnd.current?.scrollIntoView({ behavior: 'smooth' })
-    }, 50)
-  }, [messages, showAdminPanel])
+    const el = messagesRef.current
+    if (!el) return
+    function onScroll() {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+      setIsAtBottom(atBottom)
+      setShowScrollBtn(!atBottom)
+      if (atBottom) setHasNew(0)
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [mode])
 
-  // ===== ثبت‌نام =====
+  // ====== Auto-scroll only when at bottom ======
+  useEffect(() => {
+    if (mode === 'chat' && isAtBottom) {
+      setTimeout(() => {
+        messagesEnd.current?.scrollIntoView({ behavior: 'smooth' })
+      }, 50)
+    } else if (mode === 'chat' && !isAtBottom) {
+      setHasNew(h => h + 1)
+    }
+  }, [messages, mode, isAtBottom])
+
+  // ====== ثبت‌نام ======
   function registerAlias(e) {
     e.preventDefault()
     setAliasError('')
     const a = aliasInput.trim().slice(0, 20)
     if (!a) return
+
+    // چک بن (alias)
+    const isBannedAlias = Object.values(bans).some(b => b.alias === a)
+    if (isBannedAlias) {
+      setAliasError('این اسم توسط مدیر بن شده')
+      return
+    }
+    // چک بن (fingerprint)
+    const isBannedFp = Object.values(bans).some(b => b.fingerprint === fingerprint)
+    if (isBannedFp) {
+      setAliasError('دستگاه شما بن شده')
+      return
+    }
+
     USERS.get(slug(a)).once((data) => {
       if (data && data.deviceId && data.deviceId !== deviceId) {
         setAliasError('این اسم قبلاً توسط یک نفر دیگه ثبت شده')
@@ -158,7 +803,7 @@ export default function App() {
     })
   }
 
-  // ===== خروج =====
+  // ====== خروج ======
   function logout() {
     localStorage.removeItem(ALIAS_KEY)
     localStorage.removeItem(BIO_KEY)
@@ -167,32 +812,70 @@ export default function App() {
     setBio('')
     setAvatar('😀')
     setText('')
+    setReplyTo(null)
   }
 
-  // ===== ارسال پیام =====
+  // ====== ارسال پیام ======
   function sendMessage(e) {
     e?.preventDefault()
     const t = text.trim()
     if (!t || !alias || isBanned) return
+    if (chatLocked && !isAdmin) {
+      alert('چت توسط مدیر قفل شده')
+      return
+    }
+    if (!canSend()) {
+      alert('لطفاً یک ثانیه صبر کنید')
+      return
+    }
+    if (t.length > 2000) {
+      alert('پیام نباید بیشتر از ۲۰۰۰ کاراکتر باشد')
+      return
+    }
     const id = 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
     CHAT.get(id).put({
-      text: t,
+      text: t.slice(0, 2000),
       who: alias,
       bio: bio || '',
       avatar: avatar || '😀',
       deviceId,
+      fingerprint,
+      isAdmin,
       time: Date.now(),
+      replyTo: replyTo ? {
+        id: replyTo.id,
+        who: replyTo.who,
+        text: replyTo.text || '',
+      } : null,
     })
     setText('')
+    setReplyTo(null)
+    setIsAtBottom(true)
     setTimeout(() => inputRef.current?.focus(), 50)
   }
 
-  // ===== ورود ادمین =====
+  // ====== Delete message (admin) ======
+  function deleteMsg(msg) {
+    if (!isAdmin || !msg) return
+    CHAT.get(msg.id).put({
+      ...msg,
+      text: '',
+      image: null,
+      deleted: true,
+      time: msg.time,
+    })
+  }
+
+  // ====== ورود ادمین ======
   async function adminLogin(e) {
     e.preventDefault()
     setAdminError('')
     if (adminLockedByOther) {
-      setAdminError('پنل مدیریت قبلاً توسط یک نفر دیگه فعال شده')
+      setAdminError('پنل قبلاً توسط یک نفر دیگه فعال شده')
+      return
+    }
+    if (!alias) {
+      setAdminError('ابتدا یه اسم انتخاب کن')
       return
     }
     if (!adminPw) {
@@ -201,47 +884,89 @@ export default function App() {
     }
     const ok = await checkAdminPassword(adminPw)
     if (ok) {
-      ADMIN_LOCK.get('locked').put({
-        value: true,
-        by: deviceId,
+      // ثبت device در ADMIN_DEVICE برای auto-login دفعه بعد
+      ADMIN_DEVICE.get(deviceId).put({
+        deviceId,
+        alias,
+        time: Date.now(),
+        active: true,
+      })
+      // ثبت در USERS (alias admin رزرو شود)
+      USERS.get('admin_' + slug(alias)).put({
+        alias,
+        deviceId,
+        isAdmin: true,
         time: Date.now(),
       })
+
+      ADMIN_LOCK.get('locked').put({ value: true, by: deviceId, time: Date.now() })
       sessionStorage.setItem(ADMIN_KEY, '1')
+      localStorage.setItem(ADMIN_KEY, '1') // برای دفعات بعد
       setIsAdmin(true)
       setAdminLockedByMe(true)
       setShowAdminLogin(false)
-      setShowAdminPanel(true)
       setAdminPw('')
     } else {
       setAdminError('رمز اشتباهه')
     }
   }
 
-  // ===== بن =====
+  // ====== بن کاربر ======
   function banUser(msg) {
     if (!isAdmin || !msg) return
-    const id = 'b_' + (msg.deviceId || msg.who)
+    const id = 'b_' + (msg.deviceId || msg.who || Date.now())
     BANS.get(id).put({
       alias: msg.who,
       deviceId: msg.deviceId,
-      by: 'admin',
+      fingerprint: msg.fingerprint,
+      byAdmin: true,
       time: Date.now(),
       reason: 'توسط مدیر بن شد',
     })
     setMenuMsg(null)
   }
 
+  // ====== رفع بن ======
   function unbanUser(banId) {
     if (!isAdmin) return
     BANS.get(banId).put(null)
   }
 
+  // ====== قفل/باز چت ======
+  function lockChat() {
+    CHAT_LOCK.get('locked').put({ value: true, by: deviceId, time: Date.now() })
+  }
+  function unlockChat() {
+    CHAT_LOCK.get('locked').put({ value: false, by: deviceId, time: Date.now() })
+  }
+
+  // ====== انتشار پست کانال ======
+  function publishChannelPost(post) {
+    if (!isAdmin) return
+    const id = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+    CHANNEL.get('posts').get(id).put({
+      ...post,
+      id,
+      who: alias,
+      avatar,
+      time: Date.now(),
+    })
+  }
+
+  // ====== به‌روزرسانی اطلاعات کانال ======
+  function updateChannel(info) {
+    CHANNEL.get('info').put({
+      ...info,
+      time: Date.now(),
+    })
+  }
+
   const myColor = colorFor(alias || 'guest')
 
-  // ===== RENDER =====
+  // ====== RENDER ======
 
   // 1. صفحه ورود ادمین
-  if (showAdminLogin) {
+  if (showAdminLogin && alias) {
     return (
       <div className="login-screen">
         <div className="login-card">
@@ -313,13 +1038,16 @@ export default function App() {
   }
 
   // 3. بن شده
-  if (isBanned && !isAdmin) {
+  if (isBanned) {
     return (
       <div className="login-screen">
         <div className="login-card banned">
           <div className="login-logo">🚫</div>
           <h1>دسترسی مسدود</h1>
           <p>شما از چت بن شدید و نمی‌تونید پیام بفرستید</p>
+          {banInfo && banInfo.reason && (
+            <p style={{fontSize: 12, color: 'var(--dim)'}}>دلیل: {banInfo.reason}</p>
+          )}
         </div>
       </div>
     )
@@ -332,9 +1060,16 @@ export default function App() {
         messages={messages}
         bans={bans}
         alias={alias}
+        channelInfo={channelInfo}
         onClose={() => setShowAdminPanel(false)}
         onBan={banUser}
         onUnban={unbanUser}
+        onDelete={deleteMsg}
+        onPublishPost={publishChannelPost}
+        onUpdateChannel={updateChannel}
+        onLockChat={lockChat}
+        onUnlockChat={unlockChat}
+        chatLocked={chatLocked}
       />
     )
   }
@@ -352,12 +1087,25 @@ export default function App() {
           </div>
         </button>
         <div className="header-info">
-          <div className="header-title">چت عمومی</div>
-          <div className="header-sub">{messages.length} پیام • {alias}</div>
+          <div className="header-title">
+            {mode === 'channel' ? (
+              <>
+                {channelInfo.name}
+                <span className="verified">✓</span>
+              </>
+            ) : (
+              <>چت عمومی {chatLocked && <span style={{color: 'var(--danger)'}}>🔒</span>}</>
+            )}
+          </div>
+          <div className="header-sub">
+            {mode === 'chat'
+              ? `${messages.length} پیام • ${alias}${isAdmin ? ' 🛡️' : ''}`
+              : `${channelPosts.length} پست • ${alias}${isAdmin ? ' 🛡️' : ''}`}
+          </div>
         </div>
         {isAdmin && (
           <button
-            className="admin-btn"
+            className="hbtn admin"
             onClick={() => setShowAdminPanel(true)}
             title="پنل مدیریت"
           >
@@ -366,78 +1114,187 @@ export default function App() {
         )}
       </div>
 
-      <div className="messages" onClick={() => setMenuMsg(null)}>
-        {messages.length === 0 && (
-          <div className="empty-chat">
-            <div className="empty-icon">💬</div>
-            <div>پیامی نیست</div>
-            <div className="empty-hint">اولین نفر باش!</div>
-          </div>
-        )}
-        {messages.map((m) => {
-          const isMe = m.who === alias
-          const c = colorFor(m.who)
-          return (
-            <div
-              key={m.id}
-              className={`bubble-wrap ${isMe ? 'me' : 'other'}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                if (isAdmin) setMenuMsg(m)
-              }}
-            >
-              <div className={`bubble ${isMe ? 'me' : 'other'}`}>
-                {!isMe && (
-                  <div className="bubble-head">
-                    <div
-                      className="bubble-avatar"
-                      style={{ background: `linear-gradient(135deg, ${c[0]}, ${c[1]})` }}
-                    >
-                      {m.avatar || m.who.charAt(0)}
-                    </div>
-                    <div>
-                      <div className="bubble-who">{m.who}</div>
-                      {m.bio && <div className="bubble-bio">{m.bio}</div>}
-                    </div>
-                  </div>
-                )}
-                <div className="bubble-text">{m.text}</div>
-                <div className="bubble-time">
-                  {new Date(m.time).toLocaleTimeString('fa-IR', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </div>
-              </div>
-            </div>
-          )
-        })}
-        <div ref={messagesEnd} />
+      <div className="mode-switch">
+        <button
+          className={`mode-btn ${mode === 'chat' ? 'active' : ''} ${chatLocked ? 'locked' : ''}`}
+          onClick={() => setMode('chat')}
+        >
+          💬 چت
+          {chatLocked && <span className="lock-badge">قفل</span>}
+        </button>
+        <button
+          className={`mode-btn ${mode === 'channel' ? 'active' : ''}`}
+          onClick={() => setMode('channel')}
+        >
+          📢 کانال
+        </button>
       </div>
 
-      {menuMsg && isAdmin && (
-        <div className="modal-backdrop" onClick={() => setMenuMsg(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <div
-                className="modal-avatar"
-                style={{ background: `linear-gradient(135deg, ${colorFor(menuMsg.who)[0]}, ${colorFor(menuMsg.who)[1]})` }}
-              >
-                {menuMsg.avatar || menuMsg.who.charAt(0)}
-              </div>
-              <div>
-                <div className="modal-name">{menuMsg.who}</div>
-                <div className="modal-preview">"{menuMsg.text.slice(0, 40)}"</div>
-              </div>
-            </div>
-            <button className="modal-btn danger" onClick={() => banUser(menuMsg)}>
-              🚫 بن کردن این کاربر
-            </button>
-            <button className="modal-btn" onClick={() => setMenuMsg(null)}>
-              بستن
-            </button>
-          </div>
+      {chatLocked && mode === 'chat' && (
+        <div className="lock-notice">
+          🔒 چت توسط مدیر قفل شده
         </div>
+      )}
+
+      {mode === 'chat' ? (
+        <>
+          <div className="messages" ref={messagesRef} onClick={() => setMenuMsg(null)}>
+            {messages.length === 0 && (
+              <div className="empty-chat">
+                <div className="empty-icon">💬</div>
+                <div>پیامی نیست</div>
+                <div className="empty-hint">اولین نفر باش!</div>
+              </div>
+            )}
+            {messages.map((m) => (
+              <MessageBubble
+                key={m.id}
+                m={m}
+                alias={alias}
+                isAdmin={isAdmin}
+                isMe={m.who === alias}
+                onAction={(msg) => {
+                  if (msg.deleted) return
+                  if (isAdmin) {
+                    setMenuMsg(msg)
+                  } else {
+                    setMenuMsg(msg)
+                  }
+                }}
+                onReply={(msg) => setReplyTo(msg)}
+                onBan={banUser}
+                onDelete={deleteMsg}
+                onUserClick={(who) => {
+                  // scroll to first message from user
+                  const first = messages.find(x => x.who === who)
+                  if (first) {
+                    document.getElementById('msg-' + first.id)?.scrollIntoView({ behavior: 'smooth' })
+                  }
+                }}
+                replyToMsg={messages.find(x => x.id === m.replyTo?.id)}
+              />
+            ))}
+            <div ref={messagesEnd} />
+            {showScrollBtn && hasNew > 0 && (
+              <button
+                className="scroll-to-bottom"
+                onClick={() => {
+                  setIsAtBottom(true)
+                  setHasNew(0)
+                  messagesEnd.current?.scrollIntoView({ behavior: 'smooth' })
+                }}
+              >
+                ↓ {hasNew > 9 ? '۹+' : toFa(hasNew)} پیام جدید
+              </button>
+            )}
+          </div>
+
+          <form className="input-bar" onSubmit={sendMessage}>
+            {replyTo && (
+              <div className="reply-preview">
+                <span>↩️ پاسخ به <b>{replyTo.who}</b>: <i>{(replyTo.text || '').slice(0, 30)}</i></span>
+                <button
+                  type="button"
+                  className="reply-close"
+                  onClick={() => setReplyTo(null)}
+                >×</button>
+              </div>
+            )}
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder={chatLocked && !isAdmin ? 'چت قفل است...' : 'پیام...'}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              disabled={chatLocked && !isAdmin}
+              maxLength={2000}
+            />
+            <button
+              type="submit"
+              className="send-btn"
+              disabled={!text.trim() || (chatLocked && !isAdmin)}
+            >
+              ➤
+            </button>
+          </form>
+        </>
+      ) : (
+        <>
+          <div className="channel-header">
+            {isAdmin && (
+              <button className="ch-edit" onClick={() => setShowAdminPanel(true)} title="ویرایش کانال">⚙️</button>
+            )}
+            <div className="ch-avatar">
+              {channelInfo.image ? <img src={channelInfo.image} alt="" /> : channelInfo.avatar}
+            </div>
+            <div className="ch-name">
+              {channelInfo.name}
+              <span className="verified">✓</span>
+            </div>
+            <div className="ch-meta">
+              {channelInfo.desc || `${channelPosts.length} پست • کانال رسمی`}
+            </div>
+          </div>
+          <div className="messages" ref={messagesRef}>
+            {channelPosts.length === 0 ? (
+              <div className="empty-chat">
+                <div className="empty-icon">📢</div>
+                <div>هنوز پستی نیست</div>
+                {isAdmin && <div className="empty-hint">از پنل ادمین اولین پست رو بذار</div>}
+              </div>
+            ) : (
+              channelPosts.slice().reverse().map((p) => (
+                <div
+                  key={p.id}
+                  className="channel-post"
+                  style={{ '--post-color': p.templateColor || 'var(--c1)' }}
+                >
+                  {p.template && p.template !== 'none' && (
+                    <span className="post-template-tag">{p.templateLabel}</span>
+                  )}
+                  <div className="post-head">
+                    <div
+                      className="avatar-lg"
+                      style={{ background: `linear-gradient(135deg, ${colorFor(p.who)[0]}, ${colorFor(p.who)[1]})` }}
+                    >
+                      {p.avatar || p.who.charAt(0)}
+                    </div>
+                    <div className="post-meta">
+                      <div className="post-title">
+                        {p.who} <span className="verified">✓</span>
+                      </div>
+                      <div className="post-date">{formatDate(p.time)}</div>
+                    </div>
+                  </div>
+                  {p.text && <div className="post-text">{p.text}</div>}
+                  {p.image && <img src={p.image} alt="" className="post-img" loading="lazy" />}
+                </div>
+              ))
+            )}
+          </div>
+          {isAdmin && (
+            <ChannelEditor
+              onPublish={publishChannelPost}
+              onCancel={() => {}}
+            />
+          )}
+        </>
+      )}
+
+      {menuMsg && (
+        <MessageActionMenu
+          msg={menuMsg}
+          isMe={menuMsg.who === alias}
+          isAdmin={isAdmin}
+          onReply={(m) => { setReplyTo(m); setMode('chat') }}
+          onDelete={deleteMsg}
+          onBan={banUser}
+          onClose={() => setMenuMsg(null)}
+          onJumpTo={(id) => {
+            const el = document.getElementById('msg-' + id)
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }}
+        />
       )}
 
       {showProfile && (
@@ -446,6 +1303,7 @@ export default function App() {
           bio={bio}
           avatar={avatar}
           color={myColor}
+          isAdmin={isAdmin}
           onClose={() => setShowProfile(false)}
           onLogout={logout}
           onSave={(a, b, av) => {
@@ -460,217 +1318,10 @@ export default function App() {
           }}
         />
       )}
-
-      <form className="input-bar" onSubmit={sendMessage}>
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="پیام..."
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <button type="submit" className="send-btn" disabled={!text.trim()}>
-          ➤
-        </button>
-      </form>
     </div>
   )
 }
 
-// ===== Profile Modal =====
-function ProfileModal({ alias, bio, avatar, color, onClose, onSave, onLogout }) {
-  const [a, setA] = useState(alias)
-  const [b, setB] = useState(bio)
-  const [av, setAv] = useState(avatar)
-  const [err, setErr] = useState('')
-  const myDeviceId = getDeviceId()
-
-  function save(e) {
-    e.preventDefault()
-    setErr('')
-    const na = a.trim().slice(0, 20)
-    if (!na) return
-
-    if (na !== alias) {
-      USERS.get(slug(na)).once((data) => {
-        if (data && data.deviceId && data.deviceId !== myDeviceId) {
-          setErr('این اسم قبلاً ثبت شده')
-          return
-        }
-        onSave(na, b.trim().slice(0, 100), av)
-      })
-    } else {
-      onSave(na, b.trim().slice(0, 100), av)
-    }
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="profile-head">
-          <div
-            className="profile-avatar-big"
-            style={{ background: `linear-gradient(135deg, ${color[0]}, ${color[1]})` }}
-          >
-            {av}
-          </div>
-        </div>
-        <form onSubmit={save}>
-          <div className="avatar-picker">
-            <label>آواتار خودت رو انتخاب کن</label>
-            <div className="avatar-grid">
-              {AVATARS.map((e) => (
-                <button
-                  type="button"
-                  key={e}
-                  className={`avatar-opt ${av === e ? 'active' : ''}`}
-                  onClick={() => setAv(e)}
-                >
-                  {e}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="field">
-            <label>اسم</label>
-            <input
-              type="text"
-              value={a}
-              onChange={(e) => setA(e.target.value)}
-              maxLength={20}
-              placeholder="اسم مستعار"
-            />
-          </div>
-          <div className="field">
-            <label>بیو (حداکثر ۱۰۰ کاراکتر)</label>
-            <textarea
-              value={b}
-              onChange={(e) => setB(e.target.value)}
-              maxLength={100}
-              placeholder="یه چیزی درباره خودت بنویس..."
-              rows={2}
-            />
-            <div className="counter">{b.length}/100</div>
-          </div>
-          {err && <div className="err" style={{ padding: '0 1rem' }}>{err}</div>}
-          <button type="submit" className="modal-btn primary">
-            ذخیره تغییرات ✓
-          </button>
-          <button type="button" className="modal-btn logout-btn" onClick={onLogout}>
-            🚪 خروج از حساب
-          </button>
-          <button type="button" className="modal-btn" onClick={onClose}>
-            بستن
-          </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-// ===== Admin Panel =====
-function AdminPanel({ messages, bans, alias, onClose, onBan, onUnban }) {
-  const [tab, setTab] = useState('chat') // chat | bans
-  const banList = Object.entries(bans).filter(([_, b]) => b && b.alias)
-
-  return (
-    <div className="app admin-app">
-      <div className="header admin-header">
-        <button className="back-btn" onClick={onClose}>‹</button>
-        <div className="header-info">
-          <div className="header-title">🛡️ پنل مدیریت</div>
-          <div className="header-sub">{alias} • {messages.length} پیام • {banList.length} بن</div>
-        </div>
-      </div>
-
-      <div className="admin-tabs">
-        <button
-          className={tab === 'chat' ? 'active' : ''}
-          onClick={() => setTab('chat')}
-        >
-          💬 پیام‌ها
-        </button>
-        <button
-          className={tab === 'bans' ? 'active' : ''}
-          onClick={() => setTab('bans')}
-        >
-          🚫 بن‌ها
-          {banList.length > 0 && <span className="badge">{banList.length}</span>}
-        </button>
-      </div>
-
-      <div className="admin-scroll">
-        {tab === 'chat' && (
-          <div className="admin-section">
-            <p className="admin-hint">برای بن کردن روی هر پیام کلیک کن</p>
-            <div className="admin-msg-list">
-              {messages.slice().reverse().slice(0, 50).map((m) => {
-                const c = colorFor(m.who)
-                return (
-                  <div
-                    key={m.id}
-                    className="admin-msg-row"
-                    onClick={() => onBan(m)}
-                  >
-                    <div className="admin-msg-head">
-                      <div
-                        className="ban-avatar small"
-                        style={{ background: `linear-gradient(135deg, ${c[0]}, ${c[1]})` }}
-                      >
-                        {m.avatar || m.who.charAt(0)}
-                      </div>
-                      <strong>{m.who}</strong>
-                      {m.bio && <span className="msg-bio-tag">{m.bio}</span>}
-                      <span className="ban-meta">
-                        {new Date(m.time).toLocaleTimeString('fa-IR', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
-                    </div>
-                    <div className="admin-msg-text">{m.text}</div>
-                  </div>
-                )
-              })}
-              {messages.length === 0 && (
-                <div className="empty-mini">پیامی نیست</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {tab === 'bans' && (
-          <div className="admin-section">
-            {banList.length === 0 && (
-              <div className="empty-mini success">کسی بن نیست ✅ همه چی آرومه</div>
-            )}
-            {banList.map(([id, b]) => {
-              const c = colorFor(b.alias)
-              return (
-                <div key={id} className="ban-row">
-                  <div className="ban-info">
-                    <div
-                      className="ban-avatar"
-                      style={{ background: `linear-gradient(135deg, ${c[0]}, ${c[1]})` }}
-                    >
-                      {b.alias.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <strong>{b.alias}</strong>
-                      <div className="ban-meta">
-                        بن شده: {new Date(b.time).toLocaleString('fa-IR')}
-                      </div>
-                    </div>
-                  </div>
-                  <button className="btn-unban" onClick={() => onUnban(id)}>
-                    رفع بن
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  )
+function toFa(n) {
+  return String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d])
 }
