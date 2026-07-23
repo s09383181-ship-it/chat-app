@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>رفع بن همه</title>
+<style>
+body { background: #0f172a; color: #e2e8f0; font-family: Tahoma, sans-serif; padding: 2rem; text-align: center; }
+h1 { color: #4ade80; }
+.box { background: #1e293b; padding: 2rem; border-radius: 12px; max-width: 500px; margin: 2rem auto; }
+#log { text-align: right; background: #000; padding: 1rem; border-radius: 8px; font-family: monospace; font-size: 0.9rem; min-height: 200px; max-height: 400px; overflow-y: auto; }
+button { background: #4ade80; color: #000; border: none; padding: 1rem 2rem; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; margin: 0.5rem; }
+</style>
+</head>
+<body>
+<h1>🔧 ابزار رفع بن همه</h1>
+<div class="box">
+<p>روی دکمه زیر بزن تا همه بن‌ها پاک شن:</p>
+<button onclick="doReset()">🚨 پاک کردن همه بن‌ها</button>
+<div id="log">آماده...</div>
+</div>
+<script type="module">
+import Gun from 'https://cdn.jsdelivr.net/npm/gun@0.2020.1241/gun.js'
+window.doReset = function() {
+  document.getElementById('log').innerHTML = '⏳ در حال پاک کردن...'
+  const gun = Gun({peers: ['https://chatapp-relay.onrender.com/gun'], localStorage: false, radisk: false})
+  const BANS = gun.get('chatapp-v6/bans')
+  let count = 0
+  BANS.map().once((data, id) => {
+    if (data && (data.alias || data.deviceId)) {
+      count++
+      BANS.get(id).put(null)
+      log('✓ رفع بن: ' + (data.alias || id))
+    }
+  })
+  setTimeout(() => {
+    log('\n🎉 تمام! ' + count + ' نفر آنبن شدن')
+    log('حالا صفحه چت رو refresh کن')
+  }, 2000)
+}
+function log(m) {
+  const el = document.getElementById('log')
+  el.innerHTML += '\n' + m
+  el.scrollTop = el.scrollHeight
+}
+</script>
+</body>
+</html>
