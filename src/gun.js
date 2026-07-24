@@ -1,11 +1,17 @@
 import Gun from 'gun'
 
+// WebRTC + multicast بین browserها + یه relay اگه آدرسش داده شده
+// ⚠️ بدون relay، کاربرا فقط وقتی میبینن هم که همزمان آنلاین باشن
+// اگه relay داری، اینجا اضافه کن:
+const RELAY_URL = localStorage.getItem('chatapp_relay_url') || ''
+
 export const gun = Gun({
-  peers: [],
+  peers: RELAY_URL ? [RELAY_URL] : [],
   localStorage: true,
   radisk: true,
   axe: false,
-  multicast: false,
+  multicast: true,  // WebRTC discovery بین browserهای نزدیک
+  webrtc: true,      // مستقیم بین browserها
 })
 
 export const ROOT = gun.get('chatapp-v6')

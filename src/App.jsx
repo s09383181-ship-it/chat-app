@@ -353,9 +353,49 @@ function ChannelEditor({ onPublish, onCancel, isMobile }) {
 // ============================================
 // Admin Panel
 // ============================================
-function AdminPanel({ messages, bans, alias, channelInfo, onClose, onBan, onUnban, onDelete, onPublishPost, onUpdateChannel, onLockChat, onUnlockChat, chatLocked }) {
+function RelayModal({ currentUrl, onSave, onClose }) {
+  const [url, setUrl] = useState(currentUrl)
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-head">
+          <div className="modal-avatar" style={{background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)'}}>🌐</div>
+          <div>
+            <div className="modal-name">تنظیم Relay سرور</div>
+            <div className="modal-preview">برای اینکه همه کاربرا همو ببینن</div>
+          </div>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); onSave(url.trim()) }}>
+          <div className="field">
+            <label>آدرس Relay (مثلاً https://xxx.repl.co/gun)</label>
+            <input
+              type="text"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://your-relay.repl.co/gun"
+              autoFocus
+            />
+          </div>
+          <div className="admin-hint" style={{margin: '0.75rem 1rem'}}>
+            💡 خالی بذار تا فقط WebRTC محلی کار کنه.<br/>
+            🚀 برای ساخت Relay رایگان: <strong>replit.com</strong> → New Repl → Node.js → کد GUN بذار
+          </div>
+          <button type="submit" className="modal-btn primary">💾 ذخیره</button>
+          <button type="button" className="modal-btn danger" onClick={() => onSave('')}>
+            🗑️ حذف Relay (فقط محلی)
+          </button>
+          <button type="button" className="modal-btn" onClick={onClose}>بستن</button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function AdminPanel({ messages, bans, alias, channelInfo, onClose, onBan, onUnban, onUnbanAll, onDelete, onPublishPost, onUpdateChannel, onLockChat, onUnlockChat, chatLocked }) {
   const [tab, setTab] = useState('chat')
   const [showChanEdit, setShowChanEdit] = useState(false)
+  const [showRelayModal, setShowRelayModal] = useState(false)
+  const [relayUrl, setRelayUrl] = useState(() => localStorage.getItem('chatapp_relay_url') || '')
   const banList = Object.entries(bans).filter(([_, b]) => b && (b.alias || b.deviceId))
 
   return (
@@ -366,6 +406,13 @@ function AdminPanel({ messages, bans, alias, channelInfo, onClose, onBan, onUnba
           <div className="header-title">🛡️ پنل مدیریت</div>
           <div className="header-sub">{alias} • {messages.length} پیام • {banList.length} بن</div>
         </div>
+        <button
+          className="hbtn admin"
+          onClick={() => setShowRelayModal(true)}
+          title="تنظیم Relay"
+        >
+          🌐
+        </button>
         <button
           className="hbtn admin"
           onClick={chatLocked ? onUnlockChat : onLockChat}
@@ -430,6 +477,15 @@ function AdminPanel({ messages, bans, alias, channelInfo, onClose, onBan, onUnba
 
         {tab === 'bans' && (
           <div className="admin-section">
+            {banList.length > 0 && (
+              <button
+                className="modal-btn primary"
+                style={{ marginBottom: '0.75rem' }}
+                onClick={onUnbanAll}
+              >
+                🔓 رفع بن همه ({banList.length} نفر)
+              </button>
+            )}
             {banList.length === 0 ? (
               <div className="empty-mini success">✅ کسی بن نیست</div>
             ) : (
@@ -482,6 +538,19 @@ function AdminPanel({ messages, bans, alias, channelInfo, onClose, onBan, onUnba
           channelInfo={channelInfo}
           onSave={(info) => { onUpdateChannel(info); setShowChanEdit(false) }}
           onClose={() => setShowChanEdit(false)}
+        />
+      )}
+
+      {showRelayModal && (
+        <RelayModal
+          currentUrl={relayUrl}
+          onSave={(url) => {
+            localStorage.setItem('chatapp_relay_url', url)
+            setRelayUrl(url)
+            setShowRelayModal(false)
+            alert('✓ ذخیره شد. صفحه رو رفرش کن تا relay لود شه.')
+          }}
+          onClose={() => setShowRelayModal(false)}
         />
       )}
     </div>
@@ -932,6 +1001,22 @@ export default function App() {
     BANS.get(banId).put(null)
   }
 
+  // ====== رفع بن همه ======
+  function unbanAll() {
+    if (!isAdmin) return
+    if (!confirm('مطمئنی می‌خوای همه بن‌ها رو پاک کنی؟')) return
+    let count = 0
+    Object.entries(bans).forEach(([id, b]) => {
+      if (b && (b.alias || b.deviceId)) {
+        BANS.get(id).put(null)
+        count++
+      }
+    })
+    // پاک کردن state محلی
+    setBans({})
+    alert(`✓ ${count} نفر آنبن شدن`)
+  }
+
   // ====== قفل/باز چت ======
   function lockChat() {
     CHAT_LOCK.get('locked').put({ value: true, by: deviceId, time: Date.now() })
@@ -1064,6 +1149,7 @@ export default function App() {
         onClose={() => setShowAdminPanel(false)}
         onBan={banUser}
         onUnban={unbanUser}
+        onUnbanAll={unbanAll}
         onDelete={deleteMsg}
         onPublishPost={publishChannelPost}
         onUpdateChannel={updateChannel}
